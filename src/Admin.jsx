@@ -72,6 +72,14 @@ export default function Admin() {
     if (!error) refresh();
   };
 
+  /* Destructive actions (decline / cancel) require confirmation
+     so a single misclick can't drop a client's slot. */
+  const confirmThenSet = (id, status, label) => {
+    if (window.confirm(`${label}?\n\nThis frees the slot for other clients.`)) {
+      setStatus(id, status);
+    }
+  };
+
   const dayMeta = (key) => days.find((d) => d.key === key);
   const pending = bookings.filter((b) => b.status === "pending");
   const confirmed = bookings.filter((b) => b.status === "confirmed");
@@ -155,7 +163,7 @@ export default function Admin() {
               {b.note ? <><br />📝 {b.note}</> : null}
             </div>
             <div className="ownerActions">
-              <button className="declineBtn" onClick={() => setStatus(b.id, "declined")}>Decline</button>
+              <button className="declineBtn" onClick={() => confirmThenSet(b.id, "declined", `Decline ${b.name}'s request`)}>Decline</button>
               <button className="confirmBtn" onClick={() => setStatus(b.id, "confirmed")}>Confirm slot</button>
             </div>
           </div>
@@ -177,7 +185,7 @@ export default function Admin() {
             </div>
             <span className="statusPill confirmed">Confirmed</span>
             <div className="ownerActions">
-              <button className="declineBtn" onClick={() => setStatus(b.id, "declined")}>Cancel booking</button>
+              <button className="declineBtn" onClick={() => confirmThenSet(b.id, "declined", `Cancel ${b.name}'s booking`)}>Cancel booking</button>
             </div>
           </div>
         );

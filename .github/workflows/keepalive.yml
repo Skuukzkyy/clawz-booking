@@ -1,0 +1,33 @@
+name: Supabase keep-alive
+
+# Supabase free-tier projects pause after 7 days with no database
+# activity. This pings a lightweight public query every 3 days so the
+# project never sleeps and clients never hit a cold-start.
+
+on:
+  schedule:
+    - cron: "0 6 */3 * *"   # 06:00 UTC, every 3rd day
+  workflow_dispatch:          # allow manual trigger from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          echo "Pinging Supabase to keep the project awake…"
+          code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "$SUPABASE_URL/rest/v1/public_slots?select=slot_idx&limit=1" \
+            -H "apikey: $SUPABASE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_KEY")
+          echo "HTTP status: $code"
+          # 200 = rows returned, 206 = partial content (range) — both mean the DB answered
+          if [ "$code" = "200" ] || [ "$code" = "206" ]; then
+            echo "✓ Supabase is awake."
+          else
+            echo "✗ Unexpected status $code"
+            exit 1
+          fi
