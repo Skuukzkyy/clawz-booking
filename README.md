@@ -61,3 +61,5 @@ npm run dev
 - Messenger/SMS notification on confirm (e.g. Semaphore for PH SMS)
 - Booking history + no-show tracking per client
 - Owner-editable slot templates and price list
+
+# Deployed via GitHub Actions → Cloudflare Pages
