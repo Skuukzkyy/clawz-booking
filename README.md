@@ -63,3 +63,5 @@ npm run dev
 - Owner-editable slot templates and price list
 
 # Deployed via GitHub Actions → Cloudflare Pages
+
+<!-- ci check -->
