@@ -145,7 +145,14 @@ Full schema: `supabase/schema.sql`. Blocks migration: `supabase/migration_blocks
 - **Policies shown to clients:** no same-day booking (slots start tomorrow),
   non-transferable, 48-hr reschedule, ₱50 late fee at 15min / cancel at 25min,
   one companion, one-week warranty.
-- **Owner access:** hidden — the client page has no visible link to /#/admin.
+- **Booking window:** rolling 14 days starting tomorrow (getDays in shared.js).
+  No same-day booking. The window slides forward one day each day automatically.
+- **Self-seeding:** a Postgres function `seed_default_days(15)` runs daily via
+  pg_cron (4am Manila) and ensures the next 15 days have the default slot
+  template. Idempotent and non-destructive — only seeds days with zero slots,
+  never overwriting the owner's customizations. This means newly-opened days are
+  bookable even before the owner logs in. The admin app also seeds empty days
+  client-side as a fast-path fallback. (migration_selfseed.sql)
 
 ---
 

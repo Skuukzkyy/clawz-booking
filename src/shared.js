@@ -105,11 +105,11 @@ export const defaultPromo = (weekday) => weekday === 1 || weekday === 2 || weekd
 
 export const peso = (n) => `₱${n}`;
 
-/* Next 7 bookable days — no same-day booking, per studio policy */
+/* Next 14 bookable days — no same-day booking, per studio policy */
 export function getDays() {
   const days = [];
   const now = new Date();
-  for (let i = 1; i <= 7; i++) {
+  for (let i = 1; i <= 14; i++) {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i);
     days.push({
       key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
