@@ -5,6 +5,8 @@ import { SLOT_TEMPLATE, getDays, defaultPromo, peso } from "./shared";
 const tag = (b) =>
   b.service_id === "removal-only" ? " (r.o)" : b.removal ? " (r)" : "";
 
+const firstNameOf = (b) => (b?.name || "").trim().split(/\s+/)[0] || "Client";
+
 export default function Admin() {
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
@@ -16,6 +18,8 @@ export default function Admin() {
   const [days] = useState(getDays);
   const [bookings, setBookings] = useState([]);
   const [dayConf, setDayConf] = useState({});
+  const [blocks, setBlocks] = useState({}); // `${dateKey}:${slotIdx}` -> block row
+  const [manageDay, setManageDay] = useState(0); // which day's slots are being managed
 
   useEffect(() => {
     if (!configured) { setAuthReady(true); return; }
@@ -30,16 +34,22 @@ export default function Admin() {
   const refresh = useCallback(async () => {
     if (!configured || !session) return;
     const keys = days.map((d) => d.key);
-    const [bRes, cRes] = await Promise.all([
+    const [bRes, cRes, blkRes] = await Promise.all([
       supabase.from("bookings").select("*").in("date_key", keys).neq("status", "declined")
         .order("date_key").order("slot_idx"),
       supabase.from("day_config").select("*").in("date_key", keys),
+      supabase.from("slot_blocks").select("*").in("date_key", keys),
     ]);
     if (!bRes.error) setBookings(bRes.data);
     if (!cRes.error) {
       const conf = {};
       for (const row of cRes.data) conf[row.date_key] = row.mode;
       setDayConf(conf);
+    }
+    if (!blkRes.error) {
+      const bk = {};
+      for (const row of blkRes.data) bk[`${row.date_key}:${row.slot_idx}`] = row;
+      setBlocks(bk);
     }
   }, [days, session]);
 
@@ -83,6 +93,53 @@ export default function Admin() {
   const dayMeta = (key) => days.find((d) => d.key === key);
   const pending = bookings.filter((b) => b.status === "pending");
   const confirmed = bookings.filter((b) => b.status === "confirmed");
+
+  /* ── Slot blocking (day off / half day / time off) ── */
+  const isBlocked = (dateKey, idx) => Boolean(blocks[`${dateKey}:${idx}`]);
+  const bookingAt = (dateKey, idx) =>
+    bookings.find((b) => b.date_key === dateKey && b.slot_idx === idx);
+
+  const blockSlot = async (dateKey, idx) => {
+    if (bookingAt(dateKey, idx)) return; // can't block a booked slot
+    if (isBlocked(dateKey, idx)) return;
+    const { error } = await supabase.from("slot_blocks").insert({ date_key: dateKey, slot_idx: idx });
+    if (!error) refresh();
+  };
+
+  const unblockSlot = async (dateKey, idx) => {
+    const row = blocks[`${dateKey}:${idx}`];
+    if (!row) return;
+    const { error } = await supabase.from("slot_blocks").delete().eq("id", row.id);
+    if (!error) refresh();
+  };
+
+  const toggleBlock = (dateKey, idx) =>
+    isBlocked(dateKey, idx) ? unblockSlot(dateKey, idx) : blockSlot(dateKey, idx);
+
+  /* Bulk: block a set of slot indexes that aren't already booked */
+  const blockMany = async (dateKey, idxs, label) => {
+    const free = idxs.filter((i) => !bookingAt(dateKey, i) && !isBlocked(dateKey, i));
+    if (free.length === 0) return;
+    if (!window.confirm(`Close ${label}?\n\nClients won't be able to book these slots.`)) return;
+    const rows = free.map((i) => ({ date_key: dateKey, slot_idx: i }));
+    const { error } = await supabase.from("slot_blocks").insert(rows);
+    if (!error) refresh();
+  };
+
+  const openAll = async (dateKey, idxs, label) => {
+    const blocked = idxs.filter((i) => isBlocked(dateKey, i));
+    if (blocked.length === 0) return;
+    if (!window.confirm(`Re-open ${label}?`)) return;
+    const ids = blocked.map((i) => blocks[`${dateKey}:${i}`].id);
+    const { error } = await supabase.from("slot_blocks").delete().in("id", ids);
+    if (!error) refresh();
+  };
+
+  const allIdx = SLOT_TEMPLATE.map((_, i) => i);
+  // Morning = slots before the first "1pm" label; afternoon = the rest
+  const firstAfternoon = SLOT_TEMPLATE.findIndex((s) => s.label.includes("1pm"));
+  const morningIdx = allIdx.filter((i) => i < firstAfternoon);
+  const afternoonIdx = allIdx.filter((i) => i >= firstAfternoon);
 
   if (!authReady) return <div className="app"><div className="empty">Loading…</div></div>;
 
@@ -144,6 +201,68 @@ export default function Admin() {
           </button>
         </div>
       ))}
+
+      <div className="dayHeader" style={{ marginTop: 18 }}><div className="sectionTitle">Time off & availability</div></div>
+      <div className="sectionSub">Close slots when you're off. Clients see them as “Unavailable.”</div>
+
+      <div className="dayStrip" role="tablist" aria-label="Pick a day to manage">
+        {days.map((d, i) => {
+          const blockedCount = allIdx.filter((idx) => isBlocked(d.key, idx)).length;
+          return (
+            <button
+              key={d.key}
+              className={`dayChip ${i === manageDay ? "active" : ""}`}
+              onClick={() => setManageDay(i)}
+            >
+              {blockedCount > 0 && <span className="promoDot" style={{ background: "#8A6B5C" }}>{blockedCount}</span>}
+              <div className="dow">{d.dow}</div>
+              <div className="num">{d.day}</div>
+              <div className="mo">{d.month}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {(() => {
+        const d = days[manageDay];
+        const allBlocked = allIdx.every((i) => isBlocked(d.key, i) || bookingAt(d.key, i));
+        const morningBlocked = morningIdx.every((i) => isBlocked(d.key, i) || bookingAt(d.key, i));
+        return (
+          <>
+            <div className="quickActions">
+              {allBlocked
+                ? <button className="qaBtn open" onClick={() => openAll(d.key, allIdx, "the whole day")}>Re-open whole day</button>
+                : <button className="qaBtn" onClick={() => blockMany(d.key, allIdx, "the whole day")}>Close whole day</button>}
+              {morningBlocked
+                ? <button className="qaBtn open" onClick={() => openAll(d.key, morningIdx, "the morning")}>Re-open morning</button>
+                : <button className="qaBtn" onClick={() => blockMany(d.key, morningIdx, "the morning (half day)")}>Close morning</button>}
+            </div>
+            <div className="slotList" style={{ marginTop: 4 }}>
+              {SLOT_TEMPLATE.map((s, i) => {
+                const booked = bookingAt(d.key, i);
+                const blocked = isBlocked(d.key, i);
+                return (
+                  <div
+                    key={i}
+                    className={`manageSlot ${blocked ? "isBlocked" : ""} ${booked ? "isBooked" : ""}`}
+                    onClick={() => !booked && toggleBlock(d.key, i)}
+                  >
+                    <div className="slotTime">
+                      {s.label}
+                      {s.express && <span className="expressTag">Express</span>}
+                    </div>
+                    {booked
+                      ? <span className="manageState booked">Booked — {firstNameOf(booked)}</span>
+                      : blocked
+                        ? <span className="manageState blocked">Closed · tap to open</span>
+                        : <span className="manageState open">Open · tap to close</span>}
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        );
+      })()}
 
       <div className="dayHeader" style={{ marginTop: 18 }}><div className="sectionTitle">Booking requests</div></div>
       <div className="sectionSub">Confirm or decline — clients see the result within seconds.</div>

@@ -11,6 +11,7 @@ export default function Booking() {
   const [days] = useState(getDays);
   const [slots, setSlots] = useState({});      // `${dateKey}:${slotIdx}` -> {status, display_name, tag}
   const [dayConf, setDayConf] = useState({});  // dateKey -> 'promo' | 'regular'
+  const [blocks, setBlocks] = useState(new Set()); // `${dateKey}:${slotIdx}` blocked by owner
   const [loaded, setLoaded] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [sheet, setSheet] = useState(null);
@@ -28,9 +29,10 @@ export default function Booking() {
   const refresh = useCallback(async () => {
     if (!configured) { setLoaded(true); return; }
     const keys = days.map((d) => d.key);
-    const [slotRes, confRes] = await Promise.all([
+    const [slotRes, confRes, blockRes] = await Promise.all([
       supabase.from("public_slots").select("*").in("date_key", keys),
       supabase.from("day_config").select("*").in("date_key", keys),
+      supabase.from("public_blocks").select("*").in("date_key", keys),
     ]);
     if (!slotRes.error) {
       const map = {};
@@ -41,6 +43,11 @@ export default function Booking() {
       const conf = {};
       for (const row of confRes.data) conf[row.date_key] = row.mode;
       setDayConf(conf);
+    }
+    if (!blockRes.error) {
+      const bset = new Set();
+      for (const row of blockRes.data) bset.add(`${row.date_key}:${row.slot_idx}`);
+      setBlocks(bset);
     }
     setLoaded(true);
   }, [days]);
@@ -119,7 +126,10 @@ export default function Booking() {
 
   const day = days[activeDay];
   const dayIsPromo = isPromo(day);
-  const openCount = SLOT_TEMPLATE.filter((_, i) => !slotInfo(day.key, i)).length;
+  const isBlocked = (dateKey, slotIdx) => blocks.has(`${dateKey}:${slotIdx}`);
+  const openCount = SLOT_TEMPLATE.filter(
+    (_, i) => !slotInfo(day.key, i) && !isBlocked(day.key, i)
+  ).length;
 
   return (
     <div className="app">
@@ -173,17 +183,18 @@ export default function Booking() {
         {!loaded && <div className="empty">Loading slots…</div>}
         {loaded && SLOT_TEMPLATE.map((s, i) => {
           const info = slotInfo(day.key, i);
-          const state = !info ? "open" : info.status === "confirmed" ? "booked" : "pending";
+          const blocked = isBlocked(day.key, i) && !info;
+          const state = blocked ? "blocked" : !info ? "open" : info.status === "confirmed" ? "booked" : "pending";
           return (
             <div
               key={i}
-              className={`slot ${state === "open" ? "open" : "taken"} ${state === "pending" ? "pendingSlot" : ""}`}
+              className={`slot ${state === "open" ? "open" : "taken"} ${state === "pending" ? "pendingSlot" : ""} ${state === "blocked" ? "blockedSlot" : ""}`}
               onClick={() => state === "open" && openSheet(day.key, i)}
               role={state === "open" ? "button" : undefined}
               tabIndex={state === "open" ? 0 : undefined}
               onKeyDown={(e) => state === "open" && e.key === "Enter" && openSheet(day.key, i)}
             >
-              <div className="checkbox">{state === "booked" ? "x" : state === "pending" ? "•" : ""}</div>
+              <div className="checkbox">{state === "booked" ? "x" : state === "pending" ? "•" : state === "blocked" ? "–" : ""}</div>
               <div className="slotTime">
                 {s.label}
                 {s.express && <span className="expressTag">Express</span>}
@@ -195,6 +206,7 @@ export default function Booking() {
                 </div>
               )}
               {state === "pending" && <div className="slotState pend">On hold</div>}
+              {state === "blocked" && <div className="slotState blockedState">Unavailable</div>}
             </div>
           );
         })}

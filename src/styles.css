@@ -305,3 +305,33 @@ html, body { background: #F3E7DC; }
   background: #FFF3E6; border: 1px solid #F0CDA8;
   font-size: 13px; line-height: 1.6; color: #7A5230;
 }
+
+/* ───── blocked slots (client view) ───── */
+.slot.blockedSlot { background: #F1E9E2; opacity: .7; cursor: default; }
+.slot.blockedSlot .checkbox { background: var(--brown-soft); border-color: var(--brown-soft); color: var(--cream); }
+.slotState.blockedState { color: var(--brown-soft); text-transform: uppercase; }
+
+/* ───── availability management (admin view) ───── */
+.quickActions { display: flex; gap: 8px; padding: 6px 18px 0; }
+.qaBtn {
+  flex: 1;
+  border: 1px solid #E2CCBD; background: var(--white);
+  color: var(--brown); border-radius: 999px;
+  padding: 10px; font-family: 'Karla', sans-serif; font-weight: 700; font-size: 13px;
+  cursor: pointer;
+}
+.qaBtn.open { background: #E4F0E6; border-color: #CADBCD; color: var(--confirmed); }
+.manageSlot {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--white);
+  border: 1px solid #EBD8CB;
+  border-radius: 14px;
+  padding: 12px 15px;
+  cursor: pointer;
+}
+.manageSlot.isBlocked { background: #F1E9E2; }
+.manageSlot.isBooked { background: #FBF1EA; opacity: .7; cursor: default; }
+.manageState { font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+.manageState.open { color: var(--cherry); }
+.manageState.blocked { color: var(--brown-soft); }
+.manageState.booked { color: var(--brown-soft); }
