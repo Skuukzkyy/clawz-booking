@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, configured } from "./lib/supabase";
-import { DEFAULT_SLOTS, getDays, defaultPromo, peso, slotsForDay, makeLabel, fmtTime, TIME_OPTIONS } from "./shared";
+import { getDays, defaultPromo, peso, slotsForDay, makeLabel, fmtTime, TIME_OPTIONS } from "./shared";
 
 const tag = (b) =>
   b.service_id === "removal-only" ? " (r.o)" : b.removal ? " (r)" : "";
@@ -166,23 +166,9 @@ export default function Admin() {
     label: makeLabel(s.start_min, s.end_min),
   });
 
-  // Seed every day that has no slots yet with the default template.
-  // Runs once the dashboard data has loaded. Non-destructive and
-  // idempotent. This guarantees every bookable slot exists as a row,
-  // which the bookings→day_slots foreign key requires.
-  useEffect(() => {
-    if (!session) return;
-    const emptyDays = days.filter((d) => !(daySlots[d.key] && daySlots[d.key].length));
-    if (emptyDays.length === 0) return;
-    (async () => {
-      for (const d of emptyDays) {
-        const rows = DEFAULT_SLOTS.map((s, i) => rowFromSlot(d.key, i, s));
-        await supabase.from("day_slots").upsert(rows, { onConflict: "date_key,slot_idx", ignoreDuplicates: true });
-      }
-      refresh();
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, daySlots]);
+  // Day seeding is owned entirely by the database (seed_default_days + pg_cron,
+  // see migration_selfseed.sql). The client no longer seeds, which previously
+  // caused deleted default slots to reappear on refresh.
 
   // Add a slot from picked start/end minutes (end null = single-time).
   const addSlot = async (dateKey, startMin, endMin) => {
