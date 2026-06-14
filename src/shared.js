@@ -17,60 +17,87 @@ export const REMOVALS = [
   { id: "rm-soft", name: "Softgel Extension Removal", price: 99 },
 ];
 
-/* Default slot template — the usual weekly layout, used as a starting
-   point. Owners can edit each day's slots freely (add/remove/relabel).
-   Duplicate labels = two chairs running at the same time. */
-export const DEFAULT_SLOT_LABELS = [
-  "8am – 10am",
-  "8am – 10am",
-  "9am – 11am",
-  "10am – 12nn",
-  "10:30am",
-  "1pm – 3pm",
-  "1pm – 3pm",
-  "2pm – 4pm",
-  "3pm – 5pm",
-  "3:30pm",
-  "4pm – 6pm",
-  "5pm – 7pm",
-  "5:30pm",
-  "6pm – 8pm",
-  "7pm – 9pm",
+/* ── Time model ───────────────────────────────────────────────
+   Slots are defined by start (required) and end (optional) minutes
+   from midnight. The label is GENERATED, never typed, so input is
+   always valid and consistently formatted. Slots sort by start time. */
+
+/* Format minutes-from-midnight to a clean label piece, e.g. 480 -> "8am",
+   570 -> "9:30am", 720 -> "12nn", 1080 -> "6pm". */
+export function fmtTime(mins) {
+  const h24 = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h24 === 12 && m === 0) return "12nn";
+  if (h24 === 0 && m === 0) return "12mn";
+  const ampm = h24 < 12 ? "am" : "pm";
+  let h = h24 % 12;
+  if (h === 0) h = 12;
+  return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2, "0")}${ampm}`;
+}
+
+/* Build the display label from start/end minutes. */
+export function makeLabel(startMin, endMin) {
+  if (endMin == null) return fmtTime(startMin);
+  return `${fmtTime(startMin)} – ${fmtTime(endMin)}`;
+}
+
+/* Default slot template as structured {start, end} (end null = single-time). */
+export const DEFAULT_SLOT_TIMES = [
+  { start: 8 * 60, end: 10 * 60 },     // 8am – 10am
+  { start: 8 * 60, end: 10 * 60 },     // 8am – 10am (2nd chair)
+  { start: 9 * 60, end: 11 * 60 },     // 9am – 11am
+  { start: 10 * 60, end: 12 * 60 },    // 10am – 12nn
+  { start: 10 * 60 + 30, end: null },  // 10:30am
+  { start: 13 * 60, end: 15 * 60 },    // 1pm – 3pm
+  { start: 13 * 60, end: 15 * 60 },    // 1pm – 3pm (2nd chair)
+  { start: 14 * 60, end: 16 * 60 },    // 2pm – 4pm
+  { start: 15 * 60, end: 17 * 60 },    // 3pm – 5pm
+  { start: 15 * 60 + 30, end: null },  // 3:30pm
+  { start: 16 * 60, end: 18 * 60 },    // 4pm – 6pm
+  { start: 17 * 60, end: 19 * 60 },    // 5pm – 7pm
+  { start: 17 * 60 + 30, end: null },  // 5:30pm
+  { start: 18 * 60, end: 20 * 60 },    // 6pm – 8pm
+  { start: 19 * 60, end: 21 * 60 },    // 7pm – 9pm
 ];
 
-/* A slot is "express" (single time, e.g. 9:30) if its label has no range dash.
-   Works for both default and custom labels. */
-export const isExpressLabel = (label) =>
-  !/[–-]/.test(label || "");
+export const DEFAULT_SLOT_LABELS = DEFAULT_SLOT_TIMES.map((t) => makeLabel(t.start, t.end));
 
-/* Default slots as [{slot_idx, label, express}] */
-export const DEFAULT_SLOTS = DEFAULT_SLOT_LABELS.map((label, i) => ({
+/* A slot is "express" (single time) when it has no end time. */
+export const isExpress = (slot) => slot.end == null || slot.end === undefined;
+
+/* Default slots as [{slot_idx, label, start, end, express}] */
+export const DEFAULT_SLOTS = DEFAULT_SLOT_TIMES.map((t, i) => ({
   slot_idx: i,
-  label,
-  express: isExpressLabel(label),
+  start_min: t.start,
+  end_min: t.end,
+  label: makeLabel(t.start, t.end),
+  express: t.end == null,
 }));
 
-/* Back-compat alias (older code referenced SLOT_TEMPLATE) */
+/* Back-compat alias */
 export const SLOT_TEMPLATE = DEFAULT_SLOTS;
 
-/* Resolve the slots offered for a given day.
-   daySlotsMap: { [dateKey]: [{slot_idx, label}] } from the day_slots table.
+/* Resolve the slots offered for a given day, sorted chronologically by
+   start time (then end time). daySlotsMap rows carry start_min/end_min/label.
    Falls back to the default template when a day hasn't been customized. */
 export function slotsForDay(dateKey, daySlotsMap) {
   const defs = daySlotsMap && daySlotsMap[dateKey];
   if (defs && defs.length) {
     return [...defs]
-      .sort((a, b) => a.slot_idx - b.slot_idx)
-      .map((s) => ({ slot_idx: s.slot_idx, label: s.label, express: isExpressLabel(s.label) }));
+      .sort((a, b) =>
+        (a.start_min - b.start_min) ||
+        ((a.end_min ?? a.start_min) - (b.end_min ?? b.start_min)) ||
+        (a.slot_idx - b.slot_idx)
+      )
+      .map((s) => ({
+        slot_idx: s.slot_idx,
+        start_min: s.start_min,
+        end_min: s.end_min,
+        label: s.label || makeLabel(s.start_min, s.end_min),
+        express: s.end_min == null,
+      }));
   }
   return DEFAULT_SLOTS;
-}
-
-/* Look up a single slot's label for a day (used for display). */
-export function slotLabel(dateKey, slotIdx, daySlotsMap) {
-  const list = slotsForDay(dateKey, daySlotsMap);
-  const found = list.find((s) => s.slot_idx === slotIdx);
-  return found ? found.label : `Slot ${slotIdx}`;
 }
 
 /* default: Mon/Tue/Wed promo, rest regular — mirrors the real post */
@@ -102,3 +129,12 @@ export const serviceOptions = (promoDay) =>
 
 export const findService = (id, promoDay) =>
   serviceOptions(promoDay).find((s) => s.id === id);
+
+/* Time options for the slot-editor dropdowns: 6:00am … 10:00pm, 15-min steps. */
+export const TIME_OPTIONS = (() => {
+  const opts = [];
+  for (let m = 6 * 60; m <= 22 * 60; m += 15) {
+    opts.push({ value: m, label: fmtTime(m) });
+  }
+  return opts;
+})();

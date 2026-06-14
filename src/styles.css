@@ -388,3 +388,17 @@ html, body { background: #F3E7DC; }
   border-radius: 12px; padding: 10px;
   font-family: 'Karla', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer;
 }
+
+/* ───── slot editor — structured time pickers ───── */
+.addSlotRow { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
+.timeField { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.timeField label { font-size: 11px; font-weight: 700; color: var(--brown-soft); letter-spacing: .3px; }
+.timeField label .opt { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.timeField select {
+  border: 1px solid #E2CCBD; border-radius: 12px;
+  padding: 11px 10px; font-family: 'Karla', sans-serif; font-size: 15px;
+  color: var(--brown); background: var(--cream);
+}
+.timeField select:focus { outline: 2px solid var(--cherry); outline-offset: 1px; }
+.previewLine { margin-top: 8px; font-size: 13px; color: var(--brown-soft); }
+.previewLine strong { color: var(--brown); }
