@@ -111,8 +111,14 @@ Base tables (owner-only writes via RLS unless noted):
     where status <> 'declined' — the double-booking guard.
 - **day_config** — date_key (pk), mode ('promo'|'regular'). anon read, owner write.
 - **slot_blocks** — id, date_key, slot_idx, reason, created_at. Owner-managed
-  time-off / closed slots. Unique index `one_block_per_slot`. (SEE MIGRATION
-  STATUS BELOW.)
+  time-off / closed slots. Unique index `one_block_per_slot`.
+- **day_slots** — (date_key, slot_idx, label) pk (date_key, slot_idx). Owner-editable
+  per-day slot definitions. anon read, owner write. When a day has no rows here,
+  the app falls back to the DEFAULT_SLOT_LABELS template in shared.js. This is how
+  the owner customizes each day's slot layout (variable slots, single times like
+  "9:30", different chairs per day) — mirroring how they build each weekly FB post.
+- **bookings.slot_label** — denormalized snapshot of the slot label at booking
+  time, so confirmed bookings always display correctly even if slots are edited.
 
 Privacy-safe views (granted to anon):
 - **public_slots** — date_key, slot_idx, status, display_name (first name only),
@@ -125,9 +131,12 @@ Full schema: `supabase/schema.sql`. Blocks migration: `supabase/migration_blocks
 
 ## 7. Domain rules (mirrors the real studio)
 
-- **Slot template** (15 slots/day, defined in `src/shared.js` SLOT_TEMPLATE):
-  8-10, 8-10 (two chairs), 9-11, 10-12, 10:30 (express), 1-3, 1-3 (two chairs),
-  2-4, 3-5, 3:30 (express), 4-6, 5-7, 5:30 (express), 6-8, 7-9.
+- **Slot template** (default in `src/shared.js` DEFAULT_SLOT_LABELS): the usual
+  15-slot layout, used as a starting point. The owner can fully edit each day's
+  slots (add/remove/relabel) via the dashboard — slots are free-text labels, so
+  "9:30", "10:30am", and "8am – 10am" all work. A slot is shown as "express" when
+  its label has no range dash (isExpressLabel). Per-day definitions live in the
+  day_slots table; days without custom rows use the default.
 - **Promo vs Regular days:** promo = ₱299 fixed set. Default Mon/Tue/Wed promo,
   rest regular (`defaultPromo` in shared.js); owner can override per-day.
 - **Prices** (shared.js SERVICES): Gel Polish 249/299/349, Softgel 299/349/399.

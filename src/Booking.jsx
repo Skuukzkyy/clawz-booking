@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, configured } from "./lib/supabase";
 import {
-  SLOT_TEMPLATE, REMOVALS, getDays, defaultPromo, peso,
-  serviceOptions, findService,
+  REMOVALS, getDays, defaultPromo, peso,
+  serviceOptions, findService, slotsForDay,
 } from "./shared";
 
 const firstName = (full) => (full || "").trim().split(/\s+/)[0] || "Client";
@@ -12,6 +12,7 @@ export default function Booking() {
   const [slots, setSlots] = useState({});      // `${dateKey}:${slotIdx}` -> {status, display_name, tag}
   const [dayConf, setDayConf] = useState({});  // dateKey -> 'promo' | 'regular'
   const [blocks, setBlocks] = useState(new Set()); // `${dateKey}:${slotIdx}` blocked by owner
+  const [daySlots, setDaySlots] = useState({}); // dateKey -> [{slot_idx, label}]
   const [loaded, setLoaded] = useState(false);
   const [activeDay, setActiveDay] = useState(0);
   const [sheet, setSheet] = useState(null);
@@ -29,10 +30,11 @@ export default function Booking() {
   const refresh = useCallback(async () => {
     if (!configured) { setLoaded(true); return; }
     const keys = days.map((d) => d.key);
-    const [slotRes, confRes, blockRes] = await Promise.all([
+    const [slotRes, confRes, blockRes, dsRes] = await Promise.all([
       supabase.from("public_slots").select("*").in("date_key", keys),
       supabase.from("day_config").select("*").in("date_key", keys),
       supabase.from("public_blocks").select("*").in("date_key", keys),
+      supabase.from("day_slots").select("*").in("date_key", keys),
     ]);
     if (!slotRes.error) {
       const map = {};
@@ -48,6 +50,13 @@ export default function Booking() {
       const bset = new Set();
       for (const row of blockRes.data) bset.add(`${row.date_key}:${row.slot_idx}`);
       setBlocks(bset);
+    }
+    if (!dsRes.error) {
+      const ds = {};
+      for (const row of dsRes.data) {
+        (ds[row.date_key] = ds[row.date_key] || []).push({ slot_idx: row.slot_idx, label: row.label });
+      }
+      setDaySlots(ds);
     }
     setLoaded(true);
   }, [days]);
@@ -93,9 +102,12 @@ export default function Booking() {
     const d = days.find((x) => x.key === sheet.dateKey);
     const svc = findService(fService, isPromo(d));
     const rmv = REMOVALS.find((r) => r.id === fRemoval);
+    const daySlotList = slotsForDay(sheet.dateKey, daySlots);
+    const thisSlot = daySlotList.find((s) => s.slot_idx === sheet.slotIdx);
     const { error } = await supabase.from("bookings").insert({
       date_key: sheet.dateKey,
       slot_idx: sheet.slotIdx,
+      slot_label: thisSlot ? thisSlot.label : null,
       name: fName.trim(),
       fb: fFb.trim() || null,
       phone: fPhone.trim(),
@@ -127,8 +139,9 @@ export default function Booking() {
   const day = days[activeDay];
   const dayIsPromo = isPromo(day);
   const isBlocked = (dateKey, slotIdx) => blocks.has(`${dateKey}:${slotIdx}`);
-  const openCount = SLOT_TEMPLATE.filter(
-    (_, i) => !slotInfo(day.key, i) && !isBlocked(day.key, i)
+  const daySlotList = slotsForDay(day.key, daySlots);
+  const openCount = daySlotList.filter(
+    (s) => !slotInfo(day.key, s.slot_idx) && !isBlocked(day.key, s.slot_idx)
   ).length;
 
   return (
@@ -175,13 +188,17 @@ export default function Booking() {
         )}
       </div>
       <div className="sectionSub">
-        {loaded ? `${openCount} of ${SLOT_TEMPLATE.length} slots open. ` : ""}
+        {loaded ? `${openCount} of ${daySlotList.length} slots open. ` : ""}
         Tap an open slot to claim it — no more racing in the comments.
       </div>
 
       <div className="slotList">
         {!loaded && <div className="empty">Loading slots…</div>}
-        {loaded && SLOT_TEMPLATE.map((s, i) => {
+        {loaded && daySlotList.length === 0 && (
+          <div className="empty">No slots open for this day.</div>
+        )}
+        {loaded && daySlotList.map((s) => {
+          const i = s.slot_idx;
           const info = slotInfo(day.key, i);
           const blocked = isBlocked(day.key, i) && !info;
           const state = blocked ? "blocked" : !info ? "open" : info.status === "confirmed" ? "booked" : "pending";
@@ -238,7 +255,7 @@ export default function Booking() {
               <div className="sheetTitle">Claim this slot</div>
               <div>
                 <span className="sheetSlot">
-                  {d.dowLong}, {d.monthLong} {d.day} · {SLOT_TEMPLATE[sheet.slotIdx].label}
+                  {d.dowLong}, {d.monthLong} {d.day} · {slotsForDay(sheet.dateKey, daySlots).find((s) => s.slot_idx === sheet.slotIdx)?.label}
                 </span>
                 {promoDay && <span className="promoChip">₱299 PROMO DAY</span>}
               </div>

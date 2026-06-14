@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase, configured } from "./lib/supabase";
-import { SLOT_TEMPLATE, getDays, defaultPromo, peso } from "./shared";
+import { DEFAULT_SLOT_LABELS, getDays, defaultPromo, peso, slotsForDay, isExpressLabel } from "./shared";
 
 const tag = (b) =>
   b.service_id === "removal-only" ? " (r.o)" : b.removal ? " (r)" : "";
@@ -19,7 +19,9 @@ export default function Admin() {
   const [bookings, setBookings] = useState([]);
   const [dayConf, setDayConf] = useState({});
   const [blocks, setBlocks] = useState({}); // `${dateKey}:${slotIdx}` -> block row
+  const [daySlots, setDaySlots] = useState({}); // dateKey -> [{slot_idx, label}]
   const [manageDay, setManageDay] = useState(0); // which day's slots are being managed
+  const [newSlotLabel, setNewSlotLabel] = useState(""); // add-slot input
 
   useEffect(() => {
     if (!configured) { setAuthReady(true); return; }
@@ -34,11 +36,12 @@ export default function Admin() {
   const refresh = useCallback(async () => {
     if (!configured || !session) return;
     const keys = days.map((d) => d.key);
-    const [bRes, cRes, blkRes] = await Promise.all([
+    const [bRes, cRes, blkRes, dsRes] = await Promise.all([
       supabase.from("bookings").select("*").in("date_key", keys).neq("status", "declined")
         .order("date_key").order("slot_idx"),
       supabase.from("day_config").select("*").in("date_key", keys),
       supabase.from("slot_blocks").select("*").in("date_key", keys),
+      supabase.from("day_slots").select("*").in("date_key", keys),
     ]);
     if (!bRes.error) setBookings(bRes.data);
     if (!cRes.error) {
@@ -50,6 +53,13 @@ export default function Admin() {
       const bk = {};
       for (const row of blkRes.data) bk[`${row.date_key}:${row.slot_idx}`] = row;
       setBlocks(bk);
+    }
+    if (!dsRes.error) {
+      const ds = {};
+      for (const row of dsRes.data) {
+        (ds[row.date_key] = ds[row.date_key] || []).push({ slot_idx: row.slot_idx, label: row.label });
+      }
+      setDaySlots(ds);
     }
   }, [days, session]);
 
@@ -135,11 +145,85 @@ export default function Admin() {
     if (!error) refresh();
   };
 
-  const allIdx = SLOT_TEMPLATE.map((_, i) => i);
-  // Morning = slots before the first "1pm" label; afternoon = the rest
-  const firstAfternoon = SLOT_TEMPLATE.findIndex((s) => s.label.includes("1pm"));
-  const morningIdx = allIdx.filter((i) => i < firstAfternoon);
-  const afternoonIdx = allIdx.filter((i) => i >= firstAfternoon);
+  /* ── Per-day slot list (editable) ── */
+  const slotsOf = (dateKey) => slotsForDay(dateKey, daySlots);
+  const hasCustom = (dateKey) => Boolean(daySlots[dateKey] && daySlots[dateKey].length);
+
+  // index sets for the day being managed (morning = before first "1pm")
+  const manageKey = days[manageDay].key;
+  const manageSlots = slotsOf(manageKey);
+  const allIdx = manageSlots.map((s) => s.slot_idx);
+  const firstAfternoonPos = manageSlots.findIndex((s) => s.label.includes("1pm"));
+  const morningIdx = firstAfternoonPos < 0 ? [] : manageSlots.slice(0, firstAfternoonPos).map((s) => s.slot_idx);
+
+  const nextIdx = (dateKey) => {
+    const list = daySlots[dateKey] || [];
+    return list.length ? Math.max(...list.map((s) => s.slot_idx)) + 1 : 0;
+  };
+
+  // Materialize the default template into a day so it can be edited.
+  const loadDefaultInto = async (dateKey) => {
+    if (hasCustom(dateKey)) {
+      if (!window.confirm("Replace this day's slots with the default template?")) return;
+      await supabase.from("day_slots").delete().eq("date_key", dateKey);
+    }
+    const rows = DEFAULT_SLOT_LABELS.map((label, i) => ({ date_key: dateKey, slot_idx: i, label }));
+    const { error } = await supabase.from("day_slots").insert(rows);
+    if (!error) refresh();
+  };
+
+  const addSlot = async (dateKey, label) => {
+    const clean = label.trim();
+    if (!clean) return;
+    // ensure the day exists as custom first (so default isn't silently shown)
+    let baseRows = [];
+    if (!hasCustom(dateKey)) {
+      baseRows = DEFAULT_SLOT_LABELS.map((l, i) => ({ date_key: dateKey, slot_idx: i, label: l }));
+    }
+    const idx = baseRows.length ? baseRows.length : nextIdx(dateKey);
+    const rows = [...baseRows, { date_key: dateKey, slot_idx: idx, label: clean }];
+    const { error } = await supabase.from("day_slots").upsert(rows);
+    if (!error) { setNewSlotLabel(""); refresh(); }
+  };
+
+  const removeSlot = async (dateKey, idx) => {
+    if (bookingAt(dateKey, idx)) return; // can't remove a booked slot
+    // materialize default first if needed, so removing from a default day works
+    if (!hasCustom(dateKey)) {
+      const rows = DEFAULT_SLOT_LABELS
+        .map((l, i) => ({ date_key: dateKey, slot_idx: i, label: l }))
+        .filter((r) => r.slot_idx !== idx);
+      const { error } = await supabase.from("day_slots").upsert(rows);
+      if (!error) refresh();
+      return;
+    }
+    const { error } = await supabase.from("day_slots").delete()
+      .eq("date_key", dateKey).eq("slot_idx", idx);
+    if (!error) refresh();
+  };
+
+  // Copy the managed day's slot list to every other day in the week.
+  const copyToAllDays = async (dateKey) => {
+    if (!window.confirm("Copy this day's slots to all 7 days?\n\nDays with existing bookings keep those slots.")) return;
+    const source = slotsOf(dateKey);
+    for (const d of days) {
+      if (d.key === dateKey) continue;
+      // slots that already have a booking on the target day must be preserved
+      const bookedIdx = new Set(bookings.filter((b) => b.date_key === d.key).map((b) => b.slot_idx));
+      // remove only the existing custom slots that are NOT booked
+      const existing = daySlots[d.key] || [];
+      const toDelete = existing.filter((s) => !bookedIdx.has(s.slot_idx)).map((s) => s.slot_idx);
+      if (toDelete.length) {
+        await supabase.from("day_slots").delete().eq("date_key", d.key).in("slot_idx", toDelete);
+      }
+      // insert the source slots, skipping any idx that's booked on the target
+      const rows = source
+        .filter((s) => !bookedIdx.has(s.slot_idx))
+        .map((s) => ({ date_key: d.key, slot_idx: s.slot_idx, label: s.label }));
+      if (rows.length) await supabase.from("day_slots").upsert(rows);
+    }
+    refresh();
+  };
 
   if (!authReady) return <div className="app"><div className="empty">Loading…</div></div>;
 
@@ -202,12 +286,12 @@ export default function Admin() {
         </div>
       ))}
 
-      <div className="dayHeader" style={{ marginTop: 18 }}><div className="sectionTitle">Time off & availability</div></div>
-      <div className="sectionSub">Close slots when you're off. Clients see them as “Unavailable.”</div>
+      <div className="dayHeader" style={{ marginTop: 18 }}><div className="sectionTitle">Slots & time off</div></div>
+      <div className="sectionSub">Pick a day, edit its slots, or close slots when you're off.</div>
 
       <div className="dayStrip" role="tablist" aria-label="Pick a day to manage">
         {days.map((d, i) => {
-          const blockedCount = allIdx.filter((idx) => isBlocked(d.key, idx)).length;
+          const blockedCount = slotsOf(d.key).filter((s) => isBlocked(d.key, s.slot_idx)).length;
           return (
             <button
               key={d.key}
@@ -225,20 +309,57 @@ export default function Admin() {
 
       {(() => {
         const d = days[manageDay];
-        const allBlocked = allIdx.every((i) => isBlocked(d.key, i) || bookingAt(d.key, i));
-        const morningBlocked = morningIdx.every((i) => isBlocked(d.key, i) || bookingAt(d.key, i));
+        const list = slotsOf(d.key);
+        const allBlocked = list.length > 0 && list.every((s) => isBlocked(d.key, s.slot_idx) || bookingAt(d.key, s.slot_idx));
+        const morningBlocked = morningIdx.length > 0 && morningIdx.every((i) => isBlocked(d.key, i) || bookingAt(d.key, i));
         return (
           <>
+            {/* Slot editor */}
+            <div className="slotEditor">
+              <div className="editorHead">
+                <span>Edit slots for {d.dow}, {d.month} {d.day}</span>
+                <button className="linkBtn" onClick={() => loadDefaultInto(d.key)}>Load default</button>
+              </div>
+              <div className="slotChips">
+                {list.length === 0 && <div className="empty" style={{ padding: "10px 0" }}>No slots yet — add one or load the default.</div>}
+                {list.map((s) => {
+                  const booked = bookingAt(d.key, s.slot_idx);
+                  return (
+                    <span key={s.slot_idx} className={`slotChip ${booked ? "locked" : ""}`}>
+                      {s.label}
+                      {isExpressLabel(s.label) && <span className="chipExpress">·</span>}
+                      {booked
+                        ? <span className="chipLock" title="Has a booking">🔒</span>
+                        : <button className="chipX" onClick={() => removeSlot(d.key, s.slot_idx)} aria-label={`Remove ${s.label}`}>×</button>}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="addSlotRow">
+                <input
+                  value={newSlotLabel}
+                  onChange={(e) => setNewSlotLabel(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && addSlot(d.key, newSlotLabel)}
+                  placeholder="e.g. 9:30am  or  8am – 10am"
+                  aria-label="New slot label"
+                />
+                <button className="addBtn" onClick={() => addSlot(d.key, newSlotLabel)} disabled={!newSlotLabel.trim()}>Add</button>
+              </div>
+              <button className="copyBtn" onClick={() => copyToAllDays(d.key)}>Copy this day's slots to all days</button>
+            </div>
+
+            {/* Time off */}
             <div className="quickActions">
               {allBlocked
                 ? <button className="qaBtn open" onClick={() => openAll(d.key, allIdx, "the whole day")}>Re-open whole day</button>
                 : <button className="qaBtn" onClick={() => blockMany(d.key, allIdx, "the whole day")}>Close whole day</button>}
-              {morningBlocked
+              {morningIdx.length > 0 && (morningBlocked
                 ? <button className="qaBtn open" onClick={() => openAll(d.key, morningIdx, "the morning")}>Re-open morning</button>
-                : <button className="qaBtn" onClick={() => blockMany(d.key, morningIdx, "the morning (half day)")}>Close morning</button>}
+                : <button className="qaBtn" onClick={() => blockMany(d.key, morningIdx, "the morning (half day)")}>Close morning</button>)}
             </div>
             <div className="slotList" style={{ marginTop: 4 }}>
-              {SLOT_TEMPLATE.map((s, i) => {
+              {list.map((s) => {
+                const i = s.slot_idx;
                 const booked = bookingAt(d.key, i);
                 const blocked = isBlocked(d.key, i);
                 return (
@@ -273,7 +394,7 @@ export default function Admin() {
           <div className="ownerCard" key={b.id}>
             <div className="who">{b.name}{tag(b)}</div>
             <div className="meta">
-              {d ? `${d.dowLong}, ${d.monthLong} ${d.day}` : b.date_key} · {SLOT_TEMPLATE[b.slot_idx]?.label}<br />
+              {d ? `${d.dowLong}, ${d.monthLong} ${d.day}` : b.date_key} · {b.slot_label || slotsOf(b.date_key).find((s) => s.slot_idx === b.slot_idx)?.label}<br />
               📱 {b.phone}{b.fb ? ` · FB: ${b.fb}` : ""}
             </div>
             <div className="svc">
@@ -297,7 +418,7 @@ export default function Admin() {
           <div className="ownerCard" key={b.id}>
             <div className="who">{b.name}{tag(b)}</div>
             <div className="meta">
-              {d ? `${d.dowLong}, ${d.monthLong} ${d.day}` : b.date_key} · {SLOT_TEMPLATE[b.slot_idx]?.label} · 📱 {b.phone}
+              {d ? `${d.dowLong}, ${d.monthLong} ${d.day}` : b.date_key} · {b.slot_label || slotsOf(b.date_key).find((s) => s.slot_idx === b.slot_idx)?.label} · 📱 {b.phone}
             </div>
             <div className="svc">
               {b.service} — {peso(b.price)}{b.removal ? ` · ${b.removal} +${peso(b.removal_price)}` : ""}

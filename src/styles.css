@@ -335,3 +335,56 @@ html, body { background: #F3E7DC; }
 .manageState.open { color: var(--cherry); }
 .manageState.blocked { color: var(--brown-soft); }
 .manageState.booked { color: var(--brown-soft); }
+
+/* ───── slot editor (admin) ───── */
+.slotEditor {
+  margin: 10px 18px 0;
+  background: var(--white);
+  border: 1px solid #EBD8CB;
+  border-radius: 16px;
+  padding: 15px;
+}
+.editorHead {
+  display: flex; align-items: center; justify-content: space-between;
+  font-weight: 700; font-size: 14px; margin-bottom: 10px;
+}
+.linkBtn {
+  background: none; border: none; color: var(--cherry);
+  font-family: 'Karla', sans-serif; font-weight: 700; font-size: 13px;
+  cursor: pointer; text-decoration: underline;
+}
+.slotChips { display: flex; flex-wrap: wrap; gap: 7px; }
+.slotChip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--blush); color: var(--brown);
+  border-radius: 999px; padding: 6px 8px 6px 12px;
+  font-size: 13px; font-weight: 700;
+}
+.slotChip.locked { background: #EDE0D6; opacity: .85; padding-right: 12px; }
+.chipExpress { color: var(--cherry); font-weight: 700; }
+.chipX {
+  border: none; background: rgba(92,64,51,.15); color: var(--brown);
+  width: 18px; height: 18px; border-radius: 999px;
+  font-size: 14px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.chipLock { font-size: 11px; }
+.addSlotRow { display: flex; gap: 8px; margin-top: 12px; }
+.addSlotRow input {
+  flex: 1; border: 1px solid #E2CCBD; border-radius: 12px;
+  padding: 11px 13px; font-family: 'Karla', sans-serif; font-size: 15px;
+  color: var(--brown); background: var(--cream);
+}
+.addSlotRow input:focus { outline: 2px solid var(--cherry); outline-offset: 1px; }
+.addBtn {
+  border: none; background: var(--brown); color: var(--cream);
+  border-radius: 12px; padding: 0 18px;
+  font-family: 'Karla', sans-serif; font-weight: 700; font-size: 14px; cursor: pointer;
+}
+.addBtn:disabled { opacity: .45; cursor: default; }
+.copyBtn {
+  width: 100%; margin-top: 12px;
+  border: 1px dashed #D9C0AF; background: transparent; color: var(--brown-soft);
+  border-radius: 12px; padding: 10px;
+  font-family: 'Karla', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer;
+}

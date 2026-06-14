@@ -17,25 +17,61 @@ export const REMOVALS = [
   { id: "rm-soft", name: "Softgel Extension Removal", price: 99 },
 ];
 
-/* Exact slot template from the real weekly FB post.
+/* Default slot template — the usual weekly layout, used as a starting
+   point. Owners can edit each day's slots freely (add/remove/relabel).
    Duplicate labels = two chairs running at the same time. */
-export const SLOT_TEMPLATE = [
-  { label: "8am – 10am" },
-  { label: "8am – 10am" },
-  { label: "9am – 11am" },
-  { label: "10am – 12nn" },
-  { label: "10:30am", express: true },
-  { label: "1pm – 3pm" },
-  { label: "1pm – 3pm" },
-  { label: "2pm – 4pm" },
-  { label: "3pm – 5pm" },
-  { label: "3:30pm", express: true },
-  { label: "4pm – 6pm" },
-  { label: "5pm – 7pm" },
-  { label: "5:30pm", express: true },
-  { label: "6pm – 8pm" },
-  { label: "7pm – 9pm" },
+export const DEFAULT_SLOT_LABELS = [
+  "8am – 10am",
+  "8am – 10am",
+  "9am – 11am",
+  "10am – 12nn",
+  "10:30am",
+  "1pm – 3pm",
+  "1pm – 3pm",
+  "2pm – 4pm",
+  "3pm – 5pm",
+  "3:30pm",
+  "4pm – 6pm",
+  "5pm – 7pm",
+  "5:30pm",
+  "6pm – 8pm",
+  "7pm – 9pm",
 ];
+
+/* A slot is "express" (single time, e.g. 9:30) if its label has no range dash.
+   Works for both default and custom labels. */
+export const isExpressLabel = (label) =>
+  !/[–-]/.test(label || "");
+
+/* Default slots as [{slot_idx, label, express}] */
+export const DEFAULT_SLOTS = DEFAULT_SLOT_LABELS.map((label, i) => ({
+  slot_idx: i,
+  label,
+  express: isExpressLabel(label),
+}));
+
+/* Back-compat alias (older code referenced SLOT_TEMPLATE) */
+export const SLOT_TEMPLATE = DEFAULT_SLOTS;
+
+/* Resolve the slots offered for a given day.
+   daySlotsMap: { [dateKey]: [{slot_idx, label}] } from the day_slots table.
+   Falls back to the default template when a day hasn't been customized. */
+export function slotsForDay(dateKey, daySlotsMap) {
+  const defs = daySlotsMap && daySlotsMap[dateKey];
+  if (defs && defs.length) {
+    return [...defs]
+      .sort((a, b) => a.slot_idx - b.slot_idx)
+      .map((s) => ({ slot_idx: s.slot_idx, label: s.label, express: isExpressLabel(s.label) }));
+  }
+  return DEFAULT_SLOTS;
+}
+
+/* Look up a single slot's label for a day (used for display). */
+export function slotLabel(dateKey, slotIdx, daySlotsMap) {
+  const list = slotsForDay(dateKey, daySlotsMap);
+  const found = list.find((s) => s.slot_idx === slotIdx);
+  return found ? found.label : `Slot ${slotIdx}`;
+}
 
 /* default: Mon/Tue/Wed promo, rest regular — mirrors the real post */
 export const defaultPromo = (weekday) => weekday === 1 || weekday === 2 || weekday === 3;
