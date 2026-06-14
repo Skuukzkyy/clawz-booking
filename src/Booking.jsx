@@ -54,7 +54,7 @@ export default function Booking() {
     if (!dsRes.error) {
       const ds = {};
       for (const row of dsRes.data) {
-        (ds[row.date_key] = ds[row.date_key] || []).push({ slot_idx: row.slot_idx, label: row.label });
+        (ds[row.date_key] = ds[row.date_key] || []).push({ slot_idx: row.slot_idx, label: row.label, start_min: row.start_min, end_min: row.end_min });
       }
       setDaySlots(ds);
     }
