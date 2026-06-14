@@ -148,7 +148,6 @@ export default function Admin() {
 
   /* ── Per-day slot list (editable) ── */
   const slotsOf = (dateKey) => slotsForDay(dateKey, daySlots);
-  const hasCustom = (dateKey) => Boolean(daySlots[dateKey] && daySlots[dateKey].length);
 
   // index sets for the day being managed (morning = starts before 1pm/780min)
   const manageKey = days[manageDay].key;
@@ -167,16 +166,23 @@ export default function Admin() {
     label: makeLabel(s.start_min, s.end_min),
   });
 
-  // Materialize the default template into a day so it can be edited.
-  const loadDefaultInto = async (dateKey) => {
-    if (hasCustom(dateKey)) {
-      if (!window.confirm("Replace this day's slots with the default template?")) return;
-      await supabase.from("day_slots").delete().eq("date_key", dateKey);
-    }
-    const rows = DEFAULT_SLOTS.map((s, i) => rowFromSlot(dateKey, i, s));
-    const { error } = await supabase.from("day_slots").insert(rows);
-    if (!error) refresh();
-  };
+  // Seed every day that has no slots yet with the default template.
+  // Runs once the dashboard data has loaded. Non-destructive and
+  // idempotent. This guarantees every bookable slot exists as a row,
+  // which the bookings→day_slots foreign key requires.
+  useEffect(() => {
+    if (!session) return;
+    const emptyDays = days.filter((d) => !(daySlots[d.key] && daySlots[d.key].length));
+    if (emptyDays.length === 0) return;
+    (async () => {
+      for (const d of emptyDays) {
+        const rows = DEFAULT_SLOTS.map((s, i) => rowFromSlot(d.key, i, s));
+        await supabase.from("day_slots").upsert(rows, { onConflict: "date_key,slot_idx", ignoreDuplicates: true });
+      }
+      refresh();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, daySlots]);
 
   // Add a slot from picked start/end minutes (end null = single-time).
   const addSlot = async (dateKey, startMin, endMin) => {
@@ -185,52 +191,21 @@ export default function Admin() {
       window.alert("End time must be after the start time.");
       return;
     }
-    // duplicate guard: same start+end already exists → ask (two-chair case)
     const existing = slotsOf(dateKey);
     const dup = existing.find((s) => s.start_min === startMin && (s.end_min ?? null) === (endMin ?? null));
     if (dup && !window.confirm("That time already exists. Add a second chair for it?")) return;
-
-    let baseRows = [];
-    if (!hasCustom(dateKey)) {
-      baseRows = DEFAULT_SLOTS.map((s, i) => rowFromSlot(dateKey, i, s));
-    }
-    const idx = baseRows.length ? baseRows.length : nextIdx(dateKey);
-    const rows = [...baseRows, rowFromSlot(dateKey, idx, { start_min: startMin, end_min: endMin })];
-    const { error } = await supabase.from("day_slots").upsert(rows);
+    const idx = nextIdx(dateKey);
+    const row = rowFromSlot(dateKey, idx, { start_min: startMin, end_min: endMin });
+    const { error } = await supabase.from("day_slots").insert(row);
     if (!error) { setNewStart(""); setNewEnd(""); refresh(); }
+    else window.alert("Couldn't add the slot. Please try again.");
   };
 
   const removeSlot = async (dateKey, idx) => {
     if (bookingAt(dateKey, idx)) return; // can't remove a booked slot
-    if (!hasCustom(dateKey)) {
-      const rows = DEFAULT_SLOTS.map((s, i) => rowFromSlot(dateKey, i, s)).filter((r) => r.slot_idx !== idx);
-      const { error } = await supabase.from("day_slots").upsert(rows);
-      if (!error) refresh();
-      return;
-    }
     const { error } = await supabase.from("day_slots").delete()
       .eq("date_key", dateKey).eq("slot_idx", idx);
     if (!error) refresh();
-  };
-
-  // Copy the managed day's slot list to every other day in the week.
-  const copyToAllDays = async (dateKey) => {
-    if (!window.confirm("Copy this day's slots to all 7 days?\n\nDays with existing bookings keep those slots.")) return;
-    const source = slotsOf(dateKey);
-    for (const d of days) {
-      if (d.key === dateKey) continue;
-      const bookedIdx = new Set(bookings.filter((b) => b.date_key === d.key).map((b) => b.slot_idx));
-      const existing = daySlots[d.key] || [];
-      const toDelete = existing.filter((s) => !bookedIdx.has(s.slot_idx)).map((s) => s.slot_idx);
-      if (toDelete.length) {
-        await supabase.from("day_slots").delete().eq("date_key", d.key).in("slot_idx", toDelete);
-      }
-      const rows = source
-        .filter((s) => !bookedIdx.has(s.slot_idx))
-        .map((s) => rowFromSlot(d.key, s.slot_idx, s));
-      if (rows.length) await supabase.from("day_slots").upsert(rows);
-    }
-    refresh();
   };
 
   if (!authReady) return <div className="app"><div className="empty">Loading…</div></div>;
@@ -326,10 +301,9 @@ export default function Admin() {
             <div className="slotEditor">
               <div className="editorHead">
                 <span>Edit slots for {d.dow}, {d.month} {d.day}</span>
-                <button className="linkBtn" onClick={() => loadDefaultInto(d.key)}>Load default</button>
               </div>
               <div className="slotChips">
-                {list.length === 0 && <div className="empty" style={{ padding: "10px 0" }}>No slots yet — add one or load the default.</div>}
+                {list.length === 0 && <div className="empty" style={{ padding: "10px 0" }}>No slots yet — add one below.</div>}
                 {list.map((s) => {
                   const booked = bookingAt(d.key, s.slot_idx);
                   return (
@@ -343,34 +317,38 @@ export default function Admin() {
                   );
                 })}
               </div>
-              <div className="addSlotRow">
-                <div className="timeField">
-                  <label>Start</label>
-                  <select value={newStart} onChange={(e) => setNewStart(e.target.value)} aria-label="Start time">
-                    <option value="">Start…</option>
-                    {TIME_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+
+              <div className="addSlotBox">
+                <div className="addSlotRow">
+                  <div className="timeField">
+                    <label>Start time</label>
+                    <select value={newStart} onChange={(e) => setNewStart(e.target.value)} aria-label="Start time">
+                      <option value="">Pick…</option>
+                      {TIME_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </div>
+                  <div className="timeField">
+                    <label>End time</label>
+                    <select value={newEnd} onChange={(e) => setNewEnd(e.target.value)} aria-label="End time">
+                      <option value="">— none —</option>
+                      {TIME_OPTIONS.filter((t) => newStart === "" || t.value > Number(newStart))
+                        .map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                    </select>
+                  </div>
                 </div>
-                <div className="timeField">
-                  <label>End <span className="opt">(blank = single time)</span></label>
-                  <select value={newEnd} onChange={(e) => setNewEnd(e.target.value)} aria-label="End time">
-                    <option value="">none</option>
-                    {TIME_OPTIONS.filter((t) => newStart === "" || t.value > Number(newStart))
-                      .map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                  </select>
+                <div className="addSlotFoot">
+                  <span className="previewLine">
+                    {newStart === ""
+                      ? "Leave end blank for a single-time slot (e.g. 9:30am)"
+                      : <>New slot: <strong>{makeLabel(Number(newStart), newEnd === "" ? null : Number(newEnd))}</strong></>}
+                  </span>
+                  <button
+                    className="addBtn"
+                    onClick={() => addSlot(d.key, newStart === "" ? null : Number(newStart), newEnd === "" ? null : Number(newEnd))}
+                    disabled={newStart === ""}
+                  >Add slot</button>
                 </div>
-                <button
-                  className="addBtn"
-                  onClick={() => addSlot(d.key, newStart === "" ? null : Number(newStart), newEnd === "" ? null : Number(newEnd))}
-                  disabled={newStart === ""}
-                >Add</button>
               </div>
-              {newStart !== "" && (
-                <div className="previewLine">
-                  Preview: <strong>{makeLabel(Number(newStart), newEnd === "" ? null : Number(newEnd))}</strong>
-                </div>
-              )}
-              <button className="copyBtn" onClick={() => copyToAllDays(d.key)}>Copy this day's slots to all days</button>
             </div>
 
             {/* Time off */}

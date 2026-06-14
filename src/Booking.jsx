@@ -123,9 +123,12 @@ export default function Booking() {
     setSubmitting(false);
     setSheet(null);
     if (error) {
-      /* 23505 = unique_violation from one_active_booking_per_slot */
       if (error.code === "23505") {
+        /* unique_violation — slot was just taken by someone else */
         showToast("Oops — that slot was just taken. Pick another one!");
+      } else if (error.code === "23503") {
+        /* foreign_key_violation — the owner removed this slot while you were booking */
+        showToast("Sorry, that slot was just closed. Please pick another one.");
       } else {
         showToast("Couldn't save your booking. Please try again.");
       }

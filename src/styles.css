@@ -389,16 +389,32 @@ html, body { background: #F3E7DC; }
   font-family: 'Karla', sans-serif; font-weight: 700; font-size: 13px; cursor: pointer;
 }
 
-/* ───── slot editor — structured time pickers ───── */
-.addSlotRow { display: flex; gap: 8px; margin-top: 12px; align-items: flex-end; }
+
+/* ───── add-slot box (structured pickers) ───── */
+.addSlotBox {
+  margin-top: 12px; padding: 12px;
+  background: var(--cream); border: 1px solid #EBD8CB; border-radius: 12px;
+}
+.addSlotRow { display: flex; gap: 10px; }
 .timeField { flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .timeField label { font-size: 11px; font-weight: 700; color: var(--brown-soft); letter-spacing: .3px; }
-.timeField label .opt { font-weight: 400; text-transform: none; letter-spacing: 0; }
 .timeField select {
-  border: 1px solid #E2CCBD; border-radius: 12px;
+  width: 100%;
+  border: 1px solid #E2CCBD; border-radius: 10px;
   padding: 11px 10px; font-family: 'Karla', sans-serif; font-size: 15px;
-  color: var(--brown); background: var(--cream);
+  color: var(--brown); background: var(--white);
 }
 .timeField select:focus { outline: 2px solid var(--cherry); outline-offset: 1px; }
-.previewLine { margin-top: 8px; font-size: 13px; color: var(--brown-soft); }
+.addSlotFoot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-top: 12px;
+}
+.previewLine { font-size: 12.5px; color: var(--brown-soft); flex: 1; }
 .previewLine strong { color: var(--brown); }
+.addBtn {
+  border: none; background: var(--cherry); color: #fff;
+  border-radius: 999px; padding: 11px 22px;
+  font-family: 'Karla', sans-serif; font-weight: 700; font-size: 14px; cursor: pointer;
+  flex: 0 0 auto;
+}
+.addBtn:disabled { opacity: .4; cursor: default; }
